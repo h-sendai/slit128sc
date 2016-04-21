@@ -1,0 +1,208 @@
+#!/usr/bin/env python
+
+import os
+import sys
+import time
+from optparse import OptionParser
+# import PatternGeneratorData
+import SitcpRbcp
+import socket
+import struct
+
+# XXX: global variable for options
+options      = {}
+cmdline_args = []
+
+def process_options():
+    global options
+    global cmdline_args
+    global parser
+
+    parser = OptionParser(usage = 'usage: %prog [options] datafile ip_address', version = '%prog 1.0')
+
+    # -d, --debug
+    parser.add_option('-d', '--debug',
+                      action = 'store_true',
+                      dest   = 'debug',
+                      help   = 'show debug message')
+    parser.set_defaults(debug = False)
+
+    # -s, --sleep
+    parser.add_option('-s', '--sleep',
+                      action = 'store',
+                      type   = 'int',
+                      dest   = 'sleep_u_sec_between_packet',
+                      help   = 'sleep micro seconds between sending packet (NOT YET IMPLEMENT)')
+    parser.set_defaults(sleep_u_sec_between_packet = 0)
+
+    # -v, --verbose
+    parser.add_option('-v', '--verbose',
+                      action = 'store_true',
+                      dest   = 'verbose',
+                      help   = 'print verbose message')
+    parser.set_defaults(verbose = False)
+
+    # -F, --dont-verify-full
+    parser.add_option('-F', '--dont-verify-full',
+                      action = 'store_true',
+                      dest   = 'dont_verify_full',
+                      help   = 'do not verify buffer is full or not')
+    parser.set_defaults(dont_verify_full = False)
+
+    (options, cmdline_args) = parser.parse_args()
+
+def print_options_and_args():
+    # don't need "global options" to read global variable
+    print 'option dump:', options
+
+    if len(cmdline_args) > 0:
+        print 'cmdline_args:', cmdline_args
+
+def is_busy(rbcp, ip_address):
+    """FIFO full bit.  Return True if full"""
+    fifo_full_address = 0x08
+    b = ord(rbcp.read_registers(ip_address, fifo_full_address, 1))
+    if (b & 0x80) == 0x80:
+        sys.stderr.write('busy')
+        return True
+    
+    #if options.verbose:
+    #   sys.stderr.write('not busy\n')
+    return False
+
+def is_busy(rbcp, ip_address, base_addr):
+    """FIFO full bit.  Return True if full"""
+    fifo_full_address = base_addr + 0x0b
+    b = ord(rbcp.read_registers(ip_address, fifo_full_address, 1))
+    if (b & 0x80) == 0x80:
+        return True
+    ##if options.verbose:
+    ##    sys.stderr.write('not busy\n')
+    return False
+
+def send_final_packet(rbcp, ip_address, base_addr):
+    data = struct.pack('>B', 0xff)
+    rbcp.write_registers(ip_address, address = base_addr + 0x0C, length = len(data), id = 11, data = data)
+    data = struct.pack('>B', 0x55)
+    rbcp.write_registers(ip_address, address = base_addr + 0x0D, length = len(data), id = 12, data = data)
+    busy_count = 0
+    while is_busy(rbcp, ip_address, base_addr):
+        time.sleep(0.001)
+        busy_count += 1
+        if busy_count == 1000:
+            sys.stderr.write('busy more than 1 second.  exit')
+            sys.exit(1)
+
+def send_prepare_packet(rbcp, ip_address, base_addr):
+    data = struct.pack('>B', 0x47)
+    rbcp.write_registers(ip_address, address = base_addr + 0x0B, length = len(data), id = 10, data = data)
+    data = struct.pack('>B', 0xff)
+    rbcp.write_registers(ip_address, address = base_addr + 0x0C, length = len(data), id = 11, data = data)
+    data = struct.pack('>B', 0x55)
+    rbcp.write_registers(ip_address, address = base_addr + 0x0D, length = len(data), id = 12, data = data)
+    busy_count = 0
+    while is_busy(rbcp, ip_address, base_addr):
+        time.sleep(0.001)
+        busy_count += 1
+        if busy_count == 1000:
+            sys.stderr.write('busy more than 1 second.  exit')
+            sys.exit(1)
+
+def send_value_packet(rbcp, ip_address, base_addr, ch, value):
+    if options.verbose:
+        print ip_address, hex(base_addr), ch, value
+
+    l = list(value)
+
+    byte_0_s = "".join(l[0:4])
+    byte_1_s = "".join(l[4:8])
+    byte_2_s = "".join(l[8:12])
+    byte_3_s = "".join(l[12:16])
+
+    byte_0_t = byte_0_s.replace('L', '0').replace('H', '1')
+    byte_0   = int(byte_0_t, 2)
+
+    byte_1_t = byte_1_s.replace('L', '0').replace('H', '1')
+    byte_1   = int(byte_1_t, 2)
+
+    byte_2_t = byte_2_s.replace('L', '0').replace('H', '1')
+    byte_2   = int(byte_2_t, 2)
+
+    byte_3_t = byte_3_s.replace('L', '0').replace('H', '1')
+    byte_3   = int(byte_3_t, 2)
+
+    if options.verbose:
+        print byte_0, byte_1, byte_2, byte_3
+
+    data_z = struct.pack('>B', 0)
+    data_0 = struct.pack('>B', byte_0*16 + byte_1)
+    data_1 = struct.pack('>B', byte_2*16 + byte_3)
+
+    rbcp.write_registers(ip_address, address = base_addr + 0x0C, length = len(data_z), id = 12, data = data_z)
+    rbcp.write_registers(ip_address, address = base_addr + 0x0D, length = len(data_0), id = 13, data = data_0)
+    busy_count = 0
+    while is_busy(rbcp, ip_address, base_addr):
+        time.sleep(0.001)
+        busy_count += 1
+        if busy_count == 1000:
+            sys.stderr.write('busy more than 1 second.  exit')
+            sys.exit(1)
+
+    rbcp.write_registers(ip_address, address = base_addr + 0x0C, length = len(data_z), id = 14, data = data_z)
+    rbcp.write_registers(ip_address, address = base_addr + 0x0D, length = len(data_1), id = 15, data = data_1)
+    busy_count = 0
+    while is_busy(rbcp, ip_address, base_addr):
+        time.sleep(0.001)
+        busy_count += 1
+        if busy_count == 1000:
+            sys.stderr.write('busy more than 1 second.  exit')
+            sys.exit(1)
+
+def main():
+    process_options()
+    if options.verbose > 1:
+        print_options_and_args()
+    
+    if len(cmdline_args) != 2:
+        parser.print_usage()
+        sys.exit(1)
+
+    filename   = cmdline_args[0]
+    ip_address = cmdline_args[1]
+    if options.debug:
+        print data_dir, ip_address
+
+    rbcp = SitcpRbcp.SitcpRbcp()
+
+    try:
+        f = open(filename, 'r')
+    except IOError, e:
+        sys.exit(e)
+
+    ch = -1
+    values = []
+    for line in f:
+        line = line.partition('#')[0]
+        line = line.strip()
+        if line == '':
+            continue
+        # first non-comment line is DIP switch setting (assign ch = -1)
+        if ch == -1:
+            base_addr = (int(line, 2) << 24)
+            if (options.verbose):
+                print 'dip switch %s' % (line), hex(base_addr)
+            ch += 1
+            continue
+        l = line.split()
+        v = l[1]
+        values.append(v)
+    
+    send_prepare_packet(rbcp, ip_address, base_addr)
+
+    for ch, v in enumerate(values, 0):
+        send_value_packet(rbcp, ip_address, base_addr, ch, v)
+
+    send_final_packet(rbcp, ip_address, base_addr)
+
+if __name__ == '__main__':
+    main()
