@@ -3,8 +3,8 @@
 r"""Slow control module for SiTCP
 
 This module allows you to use SiTCP RBCP (Remote Bus Control Protocol).
-The specification of the SiTCP RBCP is avaiable at
-http://http://e-sys.kek.jp/tech/sitcp/
+The specification of the SiTCP RBCP is available at
+http://research.kek.jp/people/uchida/technologies/SiTCP/
 
 Sample code for read:
 
@@ -70,7 +70,7 @@ def main():
     rbcp = SitcpRbcp.SitcpRbcp()
     rbcp.set_veriy_mode()
     rbcp.set_timeout(1.0)
-    data = read_register_f('192.168.0.16', 0x10, '>B')
+    data = rbcp.read_register_f('192.168.0.16', 0x10, '>B')
     print '0x%02x' % (data)
 
 if __name__ == '__main__':
@@ -85,7 +85,7 @@ def main():
     rbcp = SitcpRbcp.SitcpRbcp()
     rbcp.set_veriy_mode()
     rbcp.set_timeout(1.0)
-    write_register_f('192.168.0.16', 0x10, '>B', 10)
+    rbcp.write_register_f('192.168.0.16', 0x10, '>B', 10)
 
 if __name__ == '__main__':
     main()
